@@ -2,7 +2,7 @@
 
 This repository contains the code for the paper: 
 
-**Double-Policy Deep Reinforcement Learning Algorithm for Multiplicity Dynamic Flexible Job Shop Scheduling: Integrating Dynamic Fluid Models for Enhanced Optimization**
+****
 
 ## Requirements
 
