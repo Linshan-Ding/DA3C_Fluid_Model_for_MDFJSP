@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-随机生成训练实例
+随机生成训练/测试实例
+实例分布与论文 Table 1 保持一致：
+    工件类型总数 R ∈ Randi[5,15]，各类型工序数 J_r ∈ Randi[5,10]，
+    可选机器数 ∈ Randi[1,M]，加工时间 t_rjm ∈ Randi[10,20]，
+    订单内各类型工件数 N_sr ∈ Randi[5,10]，订单平均到达间隔 ∈ [100,200]
 """
 from random import randint, uniform
-import numpy as np, copy, csv
-# 英文显示问题
-import matplotlib.pyplot as plt
-plt.rc('font', family='Times New Roman')  # 设置英文字体
-# 中文显示问题
-from matplotlib.font_manager import FontProperties
-font = FontProperties(fname="SimHei.ttf", size=12)  # 指定中文字体和字号
-plt.rcParams['axes.unicode_minus'] = False  # 解决负号'-'显示为方块的问题
-# 报错问题
+import numpy as np, csv
 import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+from utilities.common import DATA_DIR
 
 
 class Instance():
@@ -39,19 +36,19 @@ class Instance():
     """工件类型总数"""
     @property
     def kind_count_random(self):
-        return randint(3, 12)
+        return randint(5, 15)
     """每种工件类型的工序数"""
     @property
     def J_r(self):
-        return randint(3, 5)
+        return randint(5, 10)
     """工序在可选机器上的加工时间"""
     @property
     def t_rjm(self):
-        return randint(40, 400)
+        return randint(10, 20)
     """每个订单中包含的每种工件类型的工件数量"""
     @property
     def N_sr(self):
-        return randint(5, 50)
+        return randint(5, 10)
     """订单到达时间间隔"""
     @property
     def t_si(self):
@@ -70,7 +67,7 @@ class Instance():
         # 机器、工件信息
         task_r_dict = {r: tuple(j for j in range(self.J_r)) for r in self.kind_tuple}  # [r]对应工序元组
         kind_task_tuple = tuple((r, j) for r in self.kind_tuple for j in task_r_dict[r])  # 工序类型元组
-        machine_rj_dict = {(r, j): tuple(np.random.choice(self.machine_tuple, randint(1, self.machine_count), replace=False)) for (r, j) in kind_task_tuple}  # (r, j) 可选机器元组
+        machine_rj_dict = {(r, j): tuple(int(m) for m in np.random.choice(self.machine_tuple, randint(1, self.machine_count), replace=False)) for (r, j) in kind_task_tuple}  # (r, j) 可选机器元组(转为python int保证写盘repr兼容)
         time_rjm_dict = {(r, j): {m: self.t_rjm for m in machine_rj_dict[(r, j)]} for (r, j) in kind_task_tuple}  # [(r, j)][m]加工时间
         kind_task_m_dict = {m: tuple((r, j) for (r, j) in kind_task_tuple if m in machine_rj_dict[(r, j)]) for m in self.machine_tuple}
         time_mrj_dict = {m: {(r, j): time_rjm_dict[(r, j)][m] for (r, j) in kind_task_m_dict[m]} for m in self.machine_tuple}
@@ -93,21 +90,22 @@ class Instance():
         return task_r_dict, machine_rj_dict, kind_task_m_dict, time_rjm_dict, count_sr_dict, time_arrive_s_dict, \
                time_delivery_s_dict, kind_task_tuple, time_mrj_dict, time_rj_dict, power_mrj_dict, power_m_dict
 
-    def write_file(self):
-        """写入csv文件"""
-        os.makedirs(os.path.join('../data/DA3C', self.file_name), exist_ok=True)  # 新建实例文件夹
-        file_csv = {'based_data.csv': ['kind_count', 'machine_count', 'order_count'],
+    def write_file(self, out_dir=None):
+        """写入csv文件(与 SO_DFJSP_instance_read.Data 的读取格式一致，based_data 含 DDT 列)"""
+        out_dir = str(out_dir) if out_dir is not None else str(DATA_DIR)
+        os.makedirs(os.path.join(out_dir, self.file_name), exist_ok=True)  # 新建实例文件夹
+        file_csv = {'based_data.csv': ['kind_count', 'machine_count', 'order_count', 'DDT'],
                     'process_data.csv': ['kind', 'task', 'machine_selectable', 'process_time'],
                     'order_data.csv': ['order', 'time_arrive', 'time_delivery', 'kind_number']}
 
         for csv_name, header in file_csv.items():
-            data_file = os.path.join('../data/DA3C', self.file_name, csv_name)
+            data_file = os.path.join(out_dir, self.file_name, csv_name)
             with open(data_file, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
                 rows = []  # 初始化写入数据
                 if csv_name == 'based_data.csv':
-                    rows.append([self.kind_count, self.machine_count, self.order_count])
+                    rows.append([self.kind_count, self.machine_count, self.order_count, self.DDT])
                 elif csv_name == 'process_data.csv':
                     for r in self.kind_tuple:
                         for j in self.task_r_dict[r]:
@@ -117,16 +115,15 @@ class Instance():
                     for s in self.order_tuple:
                         rows.append([s, self.time_arrive_s_dict[s], self.time_delivery_s_dict[s], self.count_sr_dict[s]])
                 writer.writerows(rows)
-        print("写入完成")
+        print("写入完成:", os.path.join(out_dir, self.file_name))
 
 
 if __name__ == '__main__':
-    # 初始化算例集参数
+    # 生成论文测试算例网格(会覆盖 data/ 下的同名实例，慎用)
     DDT_list = [0.5, 1.0, 1.5]
     machine_count_list = [10, 15, 20]
-    order_count_list = [2, 4, 6]
+    order_count_list = [1, 3, 5]
     file_name_list = []
-    # 生成各实例文件
     for DDT in DDT_list:
         for M in machine_count_list:
             for S in order_count_list:

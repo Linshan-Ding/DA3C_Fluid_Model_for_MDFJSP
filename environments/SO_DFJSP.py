@@ -5,7 +5,7 @@
 """
 import random, math
 import time
-from utilities.Utility_Class import MyError, FigGan
+from utilities.common import MyError
 import numpy as np
 from environments.class_FJSP import FJSP
 
@@ -53,6 +53,7 @@ class SO_DFJSP_Environment(FJSP):
 
     def reset(self):
         """重置环境状态"""
+        self.fluid_solve_records = []  # 清空流体LP求解耗时记录
         self.order_object_list = [self.order_dict[s] for s in self.order_tuple]  # 未到达订单对象列表
         self.reset_parameter()  # 初始化参数对象中的列表和字典
         self.reset_object_add(self.order_object_list[0])  # 新订单到达后更新各字典对象
@@ -92,10 +93,13 @@ class SO_DFJSP_Environment(FJSP):
                       self.kind_task_dict.items())/len(self.kind_task_tuple)  # 3-工序类型完工率均值
         cro_std = math.sqrt(sum(math.pow(kind_task_object.finish_rate - cro_ave, 2) for (r, j), kind_task_object
                                 in self.kind_task_dict.items())/len(self.kind_task_tuple))  # 4-工序类型完工率标准差
-        gap_ave = sum(kind_task_object.gap_rate for (r, j), kind_task_object
-                      in self.kind_task_dict.items())/len(self.kind_task_tuple)  # 5-工序类型gap_rj均值
-        gap_std = math.sqrt(sum(math.pow(kind_task_object.gap_rate - gap_ave, 2) for (r, j), kind_task_object
-                                in self.kind_task_dict.items())/len(self.kind_task_tuple))  # 6-工序类型gap_rj标准差
+        if self.use_fluid_state:
+            gap_ave = sum(kind_task_object.gap_rate for (r, j), kind_task_object
+                          in self.kind_task_dict.items())/len(self.kind_task_tuple)  # 5-工序类型gap_rj均值
+            gap_std = math.sqrt(sum(math.pow(kind_task_object.gap_rate - gap_ave, 2) for (r, j), kind_task_object
+                                    in self.kind_task_dict.items())/len(self.kind_task_tuple))  # 6-工序类型gap_rj标准差
+        else:
+            gap_ave, gap_std = 0.0, 0.0  # 消融变体(NS/NF)：流体状态特征置零，状态维度保持不变
         dro_a, dro_e, drj_a, drj_e = self.update_parameter()  # 返回7-工序实际和8-估计延迟率、9-工件实际和10-估计延迟率+更新相关参数
         return [M, ct_m_std, cro_ave, cro_std, gap_ave, gap_std, dro_a, dro_e, drj_a, drj_e]
 
@@ -118,12 +122,15 @@ class SO_DFJSP_Environment(FJSP):
         # 依据流体模型计算各值: 计算剩余工件的实际延总数和估计延迟总数
         for r, kind_object in self.kind_dict.items():
             job_number += len(kind_object.job_unprocessed_list)  # 剩余工件总数
-            kind_end_task_object = self.kind_task_dict[(r, self.task_r_dict[r][-1])]  # 该类工件的最后一道工序对象
+            end_rj = (r, self.task_r_dict[r][-1])
+            kind_end_task_object = self.kind_task_dict[end_rj]  # 该类工件的最后一道工序对象
+            # 估计用单位加工时间：流体等效时间；去流体规则变体(NR)退化为机器平均加工时间 t̄_rj
+            est_time_end = kind_end_task_object.fluid_time_sum if self.use_fluid_rules else self.time_rj_dict[end_rj]
             for job_index, job_object in enumerate(kind_end_task_object.job_unprocessed_list):
                 if time_start_point > job_object.due_date:
                     delay_job_number_a += 1  # 剩余工件的实际延迟数
                     self.delay_time_sum_unprocessed += (time_start_point - job_object.due_date)  # 更新未完工工件的实际总延迟时间
-                if time_start_point + kind_end_task_object.fluid_time_sum*(job_index + 1) > job_object.due_date:
+                if time_start_point + est_time_end*(job_index + 1) > job_object.due_date:
                     delay_job_number_e += 1  # 剩余工件的估计延迟数
         # 计算剩余工序的实际延迟总数和估计延迟总数
         for (r, j), kind_task_object in self.kind_task_dict.items():
@@ -133,13 +140,15 @@ class SO_DFJSP_Environment(FJSP):
             task_delay_rj_e = 0  # rj估计延期工序总数
             task_delay_time_rj_a = []  # rj 中未处理工序对象的(time_now-time_due_date)列表
             task_delay_time_rj_e = []  # rj 中未处理工序对象的(estimate_time-due_date)列表
+            # 估计用单位加工时间：流体等效时间；去流体规则变体(NR)退化为机器平均加工时间 t̄_rj
+            est_time = kind_task_object.fluid_time_sum if self.use_fluid_rules else self.time_rj_dict[(r, j)]
             for task_index, task_object in enumerate(kind_task_object.task_unprocessed_list):
                 if time_start_point > task_object.due_date:
                     task_delay_rj_a += 1
-                if time_start_point + kind_task_object.fluid_time_sum*(task_index + 1) > task_object.due_date:
+                if time_start_point + est_time*(task_index + 1) > task_object.due_date:
                     task_delay_rj_e += 1
                 task_delay_time_rj_a.append(time_start_point - task_object.due_date)
-                task_delay_time_rj_e.append(time_start_point + kind_task_object.fluid_time_sum*(task_index + 1) -
+                task_delay_time_rj_e.append(time_start_point + est_time*(task_index + 1) -
                                             task_object.due_date)
             # 更新实际和估计延迟工序数
             delay_task_number_a += task_delay_rj_a  # 更新实际延期工序数
@@ -236,16 +245,17 @@ class SO_DFJSP_Environment(FJSP):
             for m, machine_object in self.machine_dict.items():
                 if machine_object.time_end <= self.step_time:
                     machine_object.state = 0  # 更新机器状态
-            # 更新流体相关属性：工序类型流体量、机器-工序类型流体量
-            gap_time = self.step_time - self.order_arrive_time  # 流动时间
-            for (r, j), kind_task_object in self.kind_task_dict.items():
-                kind_task_object.fluid_unprocessed_number = kind_task_object.fluid_unprocessed_number_start - \
-                                                            kind_task_object.fluid_rate_sum*gap_time
-            for m, machine_object in self.machine_dict.items():
-                for (r, j) in machine_object.kind_task_tuple:
-                    machine_object.fluid_unprocessed_rj_dict[(r, j)] = \
-                        machine_object.fluid_unprocessed_rj_arrival_dict[(r, j)] - \
-                        gap_time*machine_object.fluid_process_rate_rj_dict[(r, j)]
+            # 更新流体相关属性：工序类型流体量、机器-工序类型流体量(完全去流体变体NF不维护流体轨迹)
+            if self.solve_fluid:
+                gap_time = self.step_time - self.order_arrive_time  # 流动时间
+                for (r, j), kind_task_object in self.kind_task_dict.items():
+                    kind_task_object.fluid_unprocessed_number = kind_task_object.fluid_unprocessed_number_start - \
+                                                                kind_task_object.fluid_rate_sum*gap_time
+                for m, machine_object in self.machine_dict.items():
+                    for (r, j) in machine_object.kind_task_tuple:
+                        machine_object.fluid_unprocessed_rj_dict[(r, j)] = \
+                            machine_object.fluid_unprocessed_rj_arrival_dict[(r, j)] - \
+                            gap_time*machine_object.fluid_process_rate_rj_dict[(r, j)]
             # 判断是否终止
             if len(self.order_object_list) == 0 and sum(len(kind_object.job_unprocessed_list)
                                                         for r, kind_object in self.kind_dict.items()) == 0:
@@ -280,17 +290,23 @@ class SO_DFJSP_Environment(FJSP):
             else:
                 rj = max(self.kind_task_delay_a_list, key=lambda x: self.kind_task_delay_time_a[x])
         elif task_rule == 3:  # 工序选择规则3
-            if len(self.fluid_kind_task_available_list) == 0:
+            if not self.use_fluid_rules:  # 消融变体(NR/NF)：gap排序键退化为剩余未加工工序数
+                rj = max(self.kind_task_available_list, key=lambda x: len(self.kind_task_dict[x].task_unprocessed_list))
+            elif len(self.fluid_kind_task_available_list) == 0:
                 rj = max(self.kind_task_available_list, key=lambda x: self.kind_task_dict[x].gap)
             else:
                 rj = max(self.fluid_kind_task_available_list, key=lambda x: self.kind_task_dict[x].gap)
         elif task_rule == 4:  # 工序选择规则4
-            if len(self.fluid_kind_task_available_list) == 0:
+            if not self.use_fluid_rules:  # 消融变体(NR/NF)：不限制在流体解可选工序集合内
+                rj = max(self.kind_task_available_list, key=lambda x: self.kind_task_delivery_urgency[x])
+            elif len(self.fluid_kind_task_available_list) == 0:
                 rj = max(self.kind_task_available_list, key=lambda x: self.kind_task_delivery_urgency[x])
             else:
                 rj = max(self.fluid_kind_task_available_list, key=lambda x: self.kind_task_delivery_urgency[x])
         elif task_rule == 5:   # 工序选择规则5
-            if len(self.fluid_kind_task_available_list) == 0:
+            if not self.use_fluid_rules:  # 消融变体(NR/NF)：不限制在流体解可选工序集合内
+                rj = min(self.kind_task_available_list, key=lambda x: self.kind_task_due_date[x])
+            elif len(self.fluid_kind_task_available_list) == 0:
                 rj = min(self.kind_task_available_list, key=lambda x: self.kind_task_due_date[x])
             else:
                 rj = min(self.fluid_kind_task_available_list, key=lambda x: self.kind_task_due_date[x])
@@ -301,20 +317,33 @@ class SO_DFJSP_Environment(FJSP):
         return rj
 
     def machine_select(self, machine_rule, rj_selected):
-        """4个机器分配规则"""
+        """5个机器分配规则"""
         machine_selectable_list = list(set(self.machine_idle_list)&set(self.kind_task_dict[rj_selected].machine_tuple))
-        fluid_machine_selectable_list = list(set(self.machine_idle_list)&set(self.kind_task_dict[rj_selected].fluid_machine_list))
+        if self.use_fluid_rules:
+            fluid_machine_selectable_list = list(set(self.machine_idle_list)&set(self.kind_task_dict[rj_selected].fluid_machine_list))
+        else:  # 消融变体(NR/NF)：流体解可选机器集合按空集处理
+            fluid_machine_selectable_list = []
+        # 消融变体(NR/NF)的排序键：gap_mrj/gap_ave 退化为机器级未加工工序计数
         if machine_rule == 1:  # 机器分配规则1
-            if len(fluid_machine_selectable_list) == 0:
+            if not self.use_fluid_rules:
+                m = max(machine_selectable_list, key=lambda x: self.machine_dict[x].unprocessed_rj_dict[rj_selected])
+            elif len(fluid_machine_selectable_list) == 0:
                 m = max(machine_selectable_list, key=lambda x: self.machine_dict[x].gap_rj_dict[rj_selected])
             else:
                 m = max(fluid_machine_selectable_list, key=lambda x: self.machine_dict[x].gap_rj_dict[rj_selected])
         elif machine_rule == 2:  # 机器分配规则2
-            m = max(machine_selectable_list, key=lambda x: self.machine_dict[x].gap_rj_dict[rj_selected])
+            if not self.use_fluid_rules:
+                m = max(machine_selectable_list, key=lambda x: self.machine_dict[x].unprocessed_rj_dict[rj_selected])
+            else:
+                m = max(machine_selectable_list, key=lambda x: self.machine_dict[x].gap_rj_dict[rj_selected])
         elif machine_rule == 3:  # 机器分配规则3
             m = min(machine_selectable_list, key=lambda x: self.time_mrj_dict[x][rj_selected])
         elif machine_rule == 4:  # 机器分配规则4
-            if len(fluid_machine_selectable_list) == 0:
+            if not self.use_fluid_rules:
+                m = max(machine_selectable_list,
+                        key=lambda x: sum(self.machine_dict[x].unprocessed_rj_dict.values()) /
+                        max(1, len(self.machine_dict[x].unprocessed_rj_dict)))
+            elif len(fluid_machine_selectable_list) == 0:
                 m = max(machine_selectable_list, key=lambda x: self.machine_dict[x].gap_ave)
             else:
                 m = max(fluid_machine_selectable_list, key=lambda x: self.machine_dict[x].gap_ave)
@@ -392,49 +421,22 @@ class SO_DFJSP_Environment(FJSP):
         return sum(kind_task_object.gap for kind_task, kind_task_object in self.kind_task_dict.items())/len(self.kind_task_tuple)
 
 
-# 测试环境
+# 测试环境：对四个消融变体各做一次随机规则回放
 if __name__ == '__main__':
-    DDT = 1.0
-    M = 15
-    S = 10
-    # file_name = 'Mk09'
-    # path = '../data/benchmark/Brandimarte_Data'
-    path = 'D:/Python project/Deep_Reinforcement_Learning_FJSP/data/DA3C'
+    from utilities.common import DATA_DIR
     file_name = 'DDT0.5_M10_S1'
-    # file_name_list \
-    #     = ['DDT0.5_M10_S1', 'DDT0.5_M10_S3', 'DDT0.5_M10_S5', 'DDT0.5_M15_S1', 'DDT0.5_M15_S3', 'DDT0.5_M15_S5',
-    #        'DDT0.5_M20_S1', 'DDT0.5_M20_S3', 'DDT0.5_M20_S5', 'DDT1.0_M10_S1', 'DDT1.0_M10_S3', 'DDT1.0_M10_S5',
-    #        'DDT1.0_M15_S1', 'DDT1.0_M15_S3', 'DDT1.0_M15_S5', 'DDT1.0_M20_S1', 'DDT1.0_M20_S3', 'DDT1.0_M20_S5',
-    #        'DDT1.5_M10_S1', 'DDT1.5_M10_S3', 'DDT1.5_M10_S5', 'DDT1.5_M15_S1', 'DDT1.5_M15_S3', 'DDT1.5_M15_S5',
-    #        'DDT1.5_M20_S1', 'DDT1.5_M20_S3', 'DDT1.5_M20_S5']
-    # for file_name in file_name_list:
-    time_start = time.time()
-    env_object = SO_DFJSP_Environment(use_instance=False, path=path, file_name=file_name)  # 定义环境对象
-    state = env_object.reset()  # 初始化状态
-    # replay_list = []
-    operation_number = 0
-    # 随机选择动作测试环境
-    while not env_object.done:
-        # action = (random.choice([0, 1, 2, 3, 4, 5]), random.choice([0, 1, 2, 3, 4]))
-        operation_number += 1
-        action = [2, 0]
-        next_state, reward, done = env_object.step(action)
-        # replay_list.append([state, action, next_state, reward, done])
-        # state = next_state
-        # print(env_object.machine_idle_list)
-    # print("累计回报:", env_object.reward_sum)
-    # print("总步数", env_object.step_count)
-    # print("订单到达时间", [order_object.time_arrive for s, order_object in env_object.order_dict.items()])
-    # print("订单交期时间", [order_object.time_delivery for s, order_object in env_object.order_dict.items()])
-    # print("机器完工时间", [machine_object.time_end for m, machine_object in env_object.machine_dict.items()])
-    # print("最大完工时间", max([machine_object.time_end for m, machine_object in env_object.machine_dict.items()]))
-    # # print("总延期时间：", env_object.delay_time_sum)
-    # print("单周期耗时：", time.time() - time_start)
-    #
-
-    # 画甘特图
-    figure_object = FigGan(env_object)
-    # figure_object.figure()
+    for variant, (fs, fr) in {'full': (True, True), 'ns': (False, True),
+                              'nr': (True, False), 'nf': (False, False)}.items():
+        time_start = time.time()
+        env_object = SO_DFJSP_Environment(use_instance=False, path=str(DATA_DIR), file_name=file_name,
+                                          use_fluid_state=fs, use_fluid_rules=fr)
+        state = env_object.reset()
+        while not env_object.done:
+            action = [random.randint(0, 5), random.randint(0, 4)]
+            next_state, reward, done = env_object.step(action)
+        print("变体 {}: 总延期时间={:.1f}, 决策步数={}, LP求解次数={}, 耗时={:.2f}s".format(
+            variant, env_object.delay_time_sum, env_object.step_count,
+            len(env_object.fluid_solve_records), time.time() - time_start))
 
 
 

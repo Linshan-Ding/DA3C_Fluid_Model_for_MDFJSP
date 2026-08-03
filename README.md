@@ -23,7 +23,7 @@ result/
 utilities/               Helper classes (config, CSV logging, plotting)
 ```
 
-> **Note:** the repository is being refactored according to `EXPERIMENT_REFACTOR_PLAN.md`. Until phase one of that plan is merged, the historical layout (`DA3C/` instead of `agents/`, hard-coded paths) still applies.
+The refactor described in `EXPERIMENT_REFACTOR_PLAN.md` has been applied: package imports match the directory layout, all paths are repo-relative, visdom is optional (`--visdom`), and the fluid LP automatically falls back to `scipy.linprog` when docplex/CPLEX is unavailable.
 
 ## Requirements
 
@@ -81,7 +81,7 @@ Outputs: `result/csv/ablation_raw.csv`, `result/csv/ablation_summary.csv` (colum
 
 ### 2. Scale generalization (out-of-distribution instances)
 
-Deploys the trained DA3C-Full policy **without retraining** on larger instances (M∈{25,30,40}, S∈{8,10}), against EDD, CR+SPT and Random:
+Deploys the trained DA3C-Full policy **without retraining** on larger instances (M∈{25,30,40}, S∈{8,10}), against EDD+SPT, URG+SPT and Random dispatching baselines (run in the non-fluid environment, i.e. plain rule versions):
 
 ```bash
 python -m experiments.run_generalization --generate   # once: create data_generalization/

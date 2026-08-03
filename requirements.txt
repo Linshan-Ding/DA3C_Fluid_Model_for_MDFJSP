@@ -1,0 +1,15 @@
+# Core
+torch>=1.10
+numpy>=1.21
+scipy>=1.7
+
+# Optional: IBM CPLEX backend for the fluid LP (falls back to scipy.linprog when absent)
+# docplex
+
+# Optional: live training curves (enable with --visdom)
+# visdom
+
+# Optional: legacy plotting utilities (utilities/Utility_Class.py)
+# matplotlib
+# pandas
+# openpyxl
