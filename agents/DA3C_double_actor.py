@@ -134,7 +134,10 @@ class DA3C(Base_Agent, Config):
         start = time.time()
         os.makedirs(self.result_dir, exist_ok=True)
         training_log = AddData(os.path.join(self.result_dir, 'training.csv'))
-        visdom_window = None
+        # visdom：主进程只负责创建窗口并确定窗口名；worker进程内各自惰性建立连接。
+        # 不能把Visdom客户端对象传给worker——Windows下多进程以spawn方式启动，
+        # 需要pickle整个worker对象，而Visdom内部的socket线程(局部函数)不可pickle。
+        visdom_window_name = None
         if self.use_visdom:
             # 连接失败(如未启动 python -m visdom.server)时降级为仅CSV记录，不中断训练
             try:
@@ -144,7 +147,7 @@ class DA3C(Base_Agent, Config):
                 window_name = 'DA3C training ({})'.format(os.path.basename(os.path.normpath(self.result_dir)))
                 vis.line(X=[0], Y=[0], win=window_name, opts=dict(title=window_name, xlabel='epoch',
                                                                   ylabel='total_delay_time'))
-                visdom_window = (vis, window_name)
+                visdom_window_name = window_name
             except Exception as error:
                 print("visdom不可用({})，训练曲线仅记录到 {}/training.csv".format(error, self.result_dir))
         gradient_updates_queue_actor_task = Queue()
@@ -175,7 +178,7 @@ class DA3C(Base_Agent, Config):
                                          copy.deepcopy(self.critic_model), gradient_updates_queue_actor_task,
                                          gradient_updates_queue_actor_machine, gradient_updates_queue_critic,
                                          self.environment_test, self.env_kwargs, self.seed,
-                                         training_log, visdom_window)
+                                         training_log, visdom_window_name)
             worker.start()  # 启动各子线程run()函数
             processes.append(worker)
         for worker in processes:
@@ -230,14 +233,17 @@ class Actor_Critic_Worker(torch.multiprocessing.Process):
                  epsilon_decay_denominator, local_actor_task_model, local_actor_machine_model, local_critic_model,
                  gradient_updates_queue_actor_task, gradient_updates_queue_actor_machine,
                  gradient_updates_queue_critic, environment_test, env_kwargs, base_seed,
-                 training_log, visdom_window):
+                 training_log, visdom_window_name):
         torch.multiprocessing.Process.__init__(self)
         self.environment_test = environment_test  # 初始化环境对象
         self.environment = None  # 初始化训练环境对象
         self.env_kwargs = dict(env_kwargs or {})  # 环境构造参数(含消融开关)
         self.base_seed = base_seed  # 随机种子基数
         self.training_log = training_log  # 训练曲线csv记录器
-        self.visdom_window = visdom_window  # (vis, win) 或 None
+        # 仅传窗口名(字符串可pickle)；Visdom客户端在worker进程内惰性创建，见_visdom_append
+        self.visdom_window_name = visdom_window_name
+        self._vis = None  # 本worker进程的Visdom连接(spawn后于子进程内建立)
+        self._vis_failed = False  # 连接失败标记，失败后本worker不再尝试推送
         self.action_types = self.environment_test.action_types  # 动作类型
         self.worker_num = worker_num  # 线程数
         self.gradient_clipping_norm = hyper_parameter["DA3C"]["gradient_clipping_norm"]  # 梯度裁剪值
@@ -341,13 +347,19 @@ class Actor_Critic_Worker(torch.multiprocessing.Process):
                 print("epoch {}: 验证算例总延期时间 {}".format(self.counter.value,
                                                               self.environment_test.delay_time_sum))
                 self.training_log.add_data([self.counter.value, self.environment_test.delay_time_sum])  # 保存数据
-                if self.visdom_window is not None:
-                    try:
-                        vis, win = self.visdom_window
-                        vis.line(X=[self.counter.value], Y=[self.environment_test.delay_time_sum],
-                                 win=win, update='append')
-                    except Exception:
-                        pass  # visdom服务中途断开时不影响训练，曲线数据仍在training.csv中
+                self._visdom_append(self.counter.value, self.environment_test.delay_time_sum)
+
+    def _visdom_append(self, epoch, value):
+        """向visdom窗口追加一个曲线点；连接在本worker进程内惰性建立，任何异常均静默降级(数据仍在training.csv)"""
+        if self.visdom_window_name is None or self._vis_failed:
+            return
+        try:
+            if self._vis is None:
+                from visdom import Visdom
+                self._vis = Visdom(raise_exceptions=True)
+            self._vis.line(X=[epoch], Y=[value], win=self.visdom_window_name, update='append')
+        except Exception:
+            self._vis_failed = True  # visdom服务不可达或中途断开时不影响训练
 
     def calculate_new_exploration(self):
         """计算新的勘探参数。它在当前的上下3X范围内随机选取一个点"""
