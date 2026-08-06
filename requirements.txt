@@ -6,8 +6,9 @@ scipy>=1.7
 # Optional: IBM CPLEX backend for the fluid LP (falls back to scipy.linprog when absent)
 # docplex
 
-# Optional: live training curves (enable with --visdom)
-# visdom
+# Live training curves (default-on for experiments/run_ablation.py; the code
+# degrades gracefully to CSV-only logging if the visdom server is not running)
+visdom
 
 # Optional: legacy plotting utilities (utilities/Utility_Class.py)
 # matplotlib

@@ -20,12 +20,12 @@ WILCOXON_PATH = CSV_DIR / 'ablation_wilcoxon.csv'
 RAW_HEADER = ['variant', 'DDT', 'M', 'S', 'run', 'seed', 'total_tardiness', 'decision_time_ms_mean']
 
 
-def train(variant, episodes, seed, workers):
+def train(variant, episodes, seed, workers, use_visdom=True):
     """训练一个消融变体(与论文相同超参：2000 epochs、异步并行worker)"""
     from agents.DA3C_double_actor import DA3C
     _, env_kwargs = VARIANTS[variant]
     da3c = DA3C(episodes=episodes, seed=seed, result_dir=str(variant_model_dir(variant)),
-                env_kwargs=env_kwargs, workers=workers)
+                env_kwargs=env_kwargs, workers=workers, use_visdom=use_visdom)
     da3c.run_n_episodes()
 
 
@@ -103,9 +103,12 @@ def main():
     parser.add_argument('--runs', type=int, default=30, help='每个实例的独立评测次数')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--workers', type=int, default=None)
+    parser.add_argument('--no-visdom', action='store_true',
+                        help='关闭visdom实时训练曲线(默认开启；需先启动 python -m visdom.server，'
+                             '连接失败时自动降级为仅CSV记录)')
     args = parser.parse_args()
     if args.phase == 'train':
-        train(args.variant, args.episodes, args.seed, args.workers)
+        train(args.variant, args.episodes, args.seed, args.workers, use_visdom=not args.no_visdom)
     else:
         evaluate(args.variant, args.runs, args.seed)
 

@@ -136,12 +136,17 @@ class DA3C(Base_Agent, Config):
         training_log = AddData(os.path.join(self.result_dir, 'training.csv'))
         visdom_window = None
         if self.use_visdom:
-            from visdom import Visdom
-            vis = Visdom()
-            window_name = 'DA3C training'
-            vis.line(X=[0], Y=[0], win=window_name, opts=dict(title=window_name, xlabel='epoch',
-                                                              ylabel='total_delay_time'))
-            visdom_window = (vis, window_name)
+            # 连接失败(如未启动 python -m visdom.server)时降级为仅CSV记录，不中断训练
+            try:
+                from visdom import Visdom
+                vis = Visdom(raise_exceptions=True)
+                # 每个变体独立窗口(以result_dir末级目录名区分)，避免多次训练互相覆盖
+                window_name = 'DA3C training ({})'.format(os.path.basename(os.path.normpath(self.result_dir)))
+                vis.line(X=[0], Y=[0], win=window_name, opts=dict(title=window_name, xlabel='epoch',
+                                                                  ylabel='total_delay_time'))
+                visdom_window = (vis, window_name)
+            except Exception as error:
+                print("visdom不可用({})，训练曲线仅记录到 {}/training.csv".format(error, self.result_dir))
         gradient_updates_queue_actor_task = Queue()
         gradient_updates_queue_actor_machine = Queue()
         gradient_updates_queue_critic = Queue()
@@ -337,9 +342,12 @@ class Actor_Critic_Worker(torch.multiprocessing.Process):
                                                               self.environment_test.delay_time_sum))
                 self.training_log.add_data([self.counter.value, self.environment_test.delay_time_sum])  # 保存数据
                 if self.visdom_window is not None:
-                    vis, win = self.visdom_window
-                    vis.line(X=[self.counter.value], Y=[self.environment_test.delay_time_sum],
-                             win=win, update='append')
+                    try:
+                        vis, win = self.visdom_window
+                        vis.line(X=[self.counter.value], Y=[self.environment_test.delay_time_sum],
+                                 win=win, update='append')
+                    except Exception:
+                        pass  # visdom服务中途断开时不影响训练，曲线数据仍在training.csv中
 
     def calculate_new_exploration(self):
         """计算新的勘探参数。它在当前的上下3X范围内随机选取一个点"""
