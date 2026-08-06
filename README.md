@@ -32,7 +32,7 @@ Python >= 3.8
 torch  >= 1.10
 numpy、scipy、pandas
 docplex        # 可选：流体 LP 的 IBM CPLEX 后端（缺省回退 scipy.linprog）
-visdom         # 可选：训练曲线实时可视化（默认关闭，--visdom 开启）
+visdom         # 训练曲线实时可视化（消融训练默认开启；visdom 服务未启动时自动降级为仅 CSV 记录）
 ```
 
 安装：
@@ -76,6 +76,8 @@ python -m experiments.run_ablation --variant full --phase train
 python -m experiments.run_ablation --variant full --phase eval --runs 30
 # 对 ns / nr / nf 重复执行
 ```
+
+消融训练**默认开启 visdom 实时曲线**（每个变体一个独立窗口，以模型目录名区分）：先运行 `python -m visdom.server` 再启动训练即可在浏览器查看；若 visdom 服务未启动，训练自动降级为仅写 `training.csv`，不会中断。加 `--no-visdom` 可显式关闭。
 
 输出：`result/csv/ablation_raw.csv`、`result/csv/ablation_summary.csv`（列：`DDT,M,S,variant,mean,std,n_runs`）、`result/csv/ablation_wilcoxon.csv`（Full 对各变体的 Wilcoxon 符号秩检验）。
 
