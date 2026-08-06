@@ -12,7 +12,7 @@ environments/            离散事件 MDFJSP 仿真环境
   ├── class_FJSP.py      FJSP 基础类 + 动态流体模型（每次订单到达求解一次 LP）
   ├── SO_DFJSP.py        强化学习环境（20 维状态，6 个工序规则 × 5 个机器规则）
   ├── Instance_generate.py  随机动态实例生成器（参数：DDT、M、S，分布与论文 Table 1 一致）
-  └── solvers.py         流体 LP 求解后端（优先 docplex，缺省自动回退 scipy）
+  └── solvers.py         流体 LP 求解后端（自动优先级：gurobi > docplex > scipy）
 experiments/             补充实验入口脚本（见下文）
 data/                    论文使用的 27 个基准实例（DDT{0.5,1.0,1.5}_M{10,15,20}_S{1,3,5}）
 data_generalization/     规模泛化实验的分布外实例（由脚本生成）
@@ -31,7 +31,8 @@ utilities/               工具类（配置、CSV 记录、绘图等）
 Python >= 3.8
 torch  >= 1.10
 numpy、scipy、pandas
-docplex        # 可选：流体 LP 的 IBM CPLEX 后端（缺省回退 scipy.linprog）
+gurobipy       # 可选：流体 LP 的 Gurobi 后端（已安装时自动优先使用）
+docplex        # 可选：流体 LP 的 IBM CPLEX 后端
 visdom         # 训练曲线实时可视化（消融训练默认开启；visdom 服务未启动时自动降级为仅 CSV 记录）
 ```
 
@@ -124,7 +125,7 @@ python -m experiments.csv_to_latex --input result/csv/ablation_summary.csv --out
 
 - 全部随机源（`random`、`numpy`、`torch`）由 `--seed` 统一控制；评测的第 *i* 次独立运行使用 `seed + i`。
 - 论文对应的奖励函数为 `environments/SO_DFJSP.py` 中的 `function_selected = 1`（相邻决策点实际总延期时间之差），已锁定为默认。
-- 流体 LP 最大化"加工速率/流体量"比值的最小值（等价于最小化最大流体完工时间）；未安装 docplex 时，scipy 后端按标准 max–min 线性化求解同一 LP。
+- 流体 LP 最大化"加工速率/流体量"比值的最小值（等价于最小化最大流体完工时间）。求解后端按 gurobi > docplex > scipy 自动选择，也可通过环境参数 `fluid_solver_backend='gurobi'/'docplex'/'scipy'` 显式指定；三个后端求解同一 LP，最优目标值一致，但 LP 存在多重最优解时不同求解器可能返回不同的最优分配方案，导致下游调度轨迹存在合法差异——同一组实验请固定使用同一后端。
 
 ## 引用
 

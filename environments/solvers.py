@@ -8,15 +8,33 @@
 该形式与 class_FJSP.fluid_model 原 docplex 实现 maximize min(rate/N) 等价
 (标准 max-min 线性化)，从而最小化最大流体完工时间。
 
-后端优先使用 docplex(需本地安装 IBM CPLEX)，不可用时回退到 scipy.optimize.linprog，
-保证无 CPLEX 许可的机器同样可以运行全部实验。
+后端自动选择优先级：gurobipy > docplex(需本地安装 IBM CPLEX) > scipy.optimize.linprog，
+三个后端求解同一 LP，结果等价；scipy 兜底保证无商业求解器许可的机器同样可以运行全部实验。
 """
+
+try:
+    import gurobipy as _grb
+    _HAS_GUROBI = True
+except ImportError:
+    _HAS_GUROBI = False
 
 try:
     from docplex.mp.model import Model as _CplexModel
     _HAS_DOCPLEX = True
 except ImportError:
     _HAS_DOCPLEX = False
+
+_GUROBI_ENV = None  # 模块级复用的Gurobi环境(静默输出；每次求解新建Env开销大)
+
+
+def _gurobi_env():
+    global _GUROBI_ENV
+    if _GUROBI_ENV is None:
+        env = _grb.Env(empty=True)
+        env.setParam('OutputFlag', 0)  # 关闭求解日志(含许可横幅)
+        env.start()
+        _GUROBI_ENV = env
+    return _GUROBI_ENV
 
 
 def solve_fluid_lp(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple, kind_task_m_dict,
@@ -26,10 +44,14 @@ def solve_fluid_lp(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple, kind
     求解流体 LP，返回 {(m, (r, j)): 时间分配比例}。
     :param fluid_number: {(r, j): 订单到达时刻未加工流体数}
     :param fluid_number_time: {(r, j): 订单到达时刻瞬态流体数}
-    :param backend: None(自动) / 'docplex' / 'scipy'
+    :param backend: None(自动) / 'gurobi' / 'docplex' / 'scipy'
     """
     if backend is None:
-        backend = 'docplex' if _HAS_DOCPLEX else 'scipy'
+        backend = 'gurobi' if _HAS_GUROBI else ('docplex' if _HAS_DOCPLEX else 'scipy')
+    if backend == 'gurobi':
+        return _solve_gurobi(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple,
+                             kind_task_m_dict, machine_rj_dict, process_rate_m_rj_dict,
+                             fluid_number, fluid_number_time)
     if backend == 'docplex':
         return _solve_docplex(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple,
                               kind_task_m_dict, machine_rj_dict, process_rate_m_rj_dict,
@@ -39,6 +61,33 @@ def solve_fluid_lp(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple, kind
                             kind_task_m_dict, machine_rj_dict, process_rate_m_rj_dict,
                             fluid_number, fluid_number_time)
     raise ValueError('未知的流体 LP 求解后端: {}'.format(backend))
+
+
+def _solve_gurobi(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple, kind_task_m_dict,
+                  machine_rj_dict, process_rate_m_rj_dict, fluid_number, fluid_number_time):
+    """Gurobi 后端：max-min 线性化(max z, s.t. sum_m X*e >= z*N_rj)"""
+    model = _grb.Model('fluid_lp', env=_gurobi_env())
+    var_keys = [(m, rj) for m in machine_tuple for rj in kind_task_m_dict[m]]
+    X = {key: model.addVar(lb=0.0, ub=1.0) for key in var_keys}
+    z = model.addVar(lb=0.0)
+    model.setObjective(z, _grb.GRB.MAXIMIZE)
+    # rate_rj >= z * N_rj
+    rate = {rj: _grb.quicksum(X[m, rj] * process_rate_m_rj_dict[m][rj]
+                              for m in machine_rj_dict[rj]) for rj in kind_task_tuple}
+    for rj in kind_task_tuple:
+        model.addConstr(rate[rj] >= z * fluid_number[rj])
+    # 机器时间分配比例约束
+    for m in machine_tuple:
+        model.addConstr(_grb.quicksum(X[m, rj] for rj in kind_task_m_dict[m]) <= 1)
+    # 可行性约束(仅当下一工序阶段瞬态流体量为0)
+    for r in kind_tuple:
+        for j in task_r_dict[r][:-1]:
+            if fluid_number_time[(r, j + 1)] == 0:
+                model.addConstr(rate[(r, j)] >= rate[(r, j + 1)])
+    model.optimize()
+    if model.Status != _grb.GRB.OPTIMAL:
+        raise RuntimeError('流体 LP 求解失败(Gurobi status={})'.format(model.Status))
+    return {key: float(var.X) for key, var in X.items()}
 
 
 def _solve_docplex(machine_tuple, kind_tuple, task_r_dict, kind_task_tuple, kind_task_m_dict,
