@@ -34,7 +34,18 @@ def read_raw():
     if not RAW_PATH.exists():
         return []
     with open(RAW_PATH, newline='') as file:
-        return list(csv.DictReader(file))
+        rows = list(csv.DictReader(file))
+    # csv读回的值全为字符串，统一转回数值类型；
+    # 否则与新评测行(数值类型)混合分组排序时会抛 TypeError: '<' not supported ...
+    for row in rows:
+        row['DDT'] = float(row['DDT'])
+        row['M'] = int(row['M'])
+        row['S'] = int(row['S'])
+        row['run'] = int(row['run'])
+        row['seed'] = int(row['seed'])
+        row['total_tardiness'] = float(row['total_tardiness'])
+        row['decision_time_ms_mean'] = float(row['decision_time_ms_mean'])
+    return rows
 
 
 def write_raw(rows):
@@ -96,9 +107,11 @@ def rebuild_summary(raw_rows):
 
 def main():
     parser = argparse.ArgumentParser(description='流体组件消融实验')
-    parser.add_argument('--variant', choices=sorted(VARIANTS), required=True,
-                        help='full=完整DA3C, ns=去流体状态, nr=去流体规则, nf=完全去流体')
-    parser.add_argument('--phase', choices=['train', 'eval'], required=True)
+    parser.add_argument('--variant', choices=sorted(VARIANTS), default=None,
+                        help='full=完整DA3C, ns=去流体状态, nr=去流体规则, nf=完全去流体'
+                             '(phase=summarize时可省略)')
+    parser.add_argument('--phase', choices=['train', 'eval', 'summarize'], required=True,
+                        help='summarize: 不重新评测，仅从已有 ablation_raw.csv 重建汇总与检验文件')
     parser.add_argument('--episodes', type=int, default=2000, help='训练周期(论文设置为2000)')
     parser.add_argument('--runs', type=int, default=30, help='每个实例的独立评测次数')
     parser.add_argument('--seed', type=int, default=0)
@@ -107,6 +120,14 @@ def main():
                         help='关闭visdom实时训练曲线(默认开启；需先启动 python -m visdom.server，'
                              '连接失败时自动降级为仅CSV记录)')
     args = parser.parse_args()
+    if args.phase == 'summarize':
+        raw_rows = read_raw()
+        if not raw_rows:
+            raise SystemExit('未找到 {}，请先运行 --phase eval'.format(RAW_PATH))
+        rebuild_summary(raw_rows)
+        return
+    if args.variant is None:
+        raise SystemExit('phase=train/eval 时必须指定 --variant')
     if args.phase == 'train':
         train(args.variant, args.episodes, args.seed, args.workers, use_visdom=not args.no_visdom)
     else:
