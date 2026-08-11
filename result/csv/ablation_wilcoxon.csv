@@ -1,2 +1,4 @@
 pair,n_instances,statistic,p_value
+full_vs_nf,27,0.0,1.49012e-08
+full_vs_nr,27,0.0,1.49012e-08
 full_vs_ns,27,8.0,3.72529e-07
