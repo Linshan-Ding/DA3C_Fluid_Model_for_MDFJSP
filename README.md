@@ -121,6 +121,34 @@ python -m experiments.csv_to_latex --input result/csv/ablation_summary.csv --out
 
 生成 booktabs 风格的 `tabular` 片段（行内最优均值自动加粗），可在论文中直接 `\input{}`。
 
+## 出版级配图生成
+
+补充实验全部运行完毕后，一条命令生成所有出版级矢量 PDF 配图（输出到 `result/figures/`，TrueType/Type42 字体内嵌，满足期刊投稿要求；缺少某个数据文件时自动跳过对应图）：
+
+```bash
+python -m experiments.plot_figures --figure all
+```
+
+也可单独生成某张图：
+
+```bash
+python -m experiments.plot_figures --figure convergence      # 消融变体训练收敛曲线对比
+python -m experiments.plot_figures --figure raincloud        # 四个变体在27实例上的云雨图
+python -m experiments.plot_figures --figure heatmap          # 各变体相对Full的逐实例变化热力图
+python -m experiments.plot_figures --figure generalization   # 规模泛化实验分组柱状图
+python -m experiments.plot_figures --figure lp-time          # 流体LP求解时间随规模变化图
+```
+
+| 图 | 输出文件 | 数据源 |
+|---|---|---|
+| 收敛曲线对比 | `fig_ablation_convergence.pdf` | `result/models/*/training.csv` |
+| 消融云雨图 | `fig_ablation_raincloud.pdf` | `result/csv/ablation_raw.csv` |
+| 消融热力图 | `fig_ablation_heatmap.pdf` | `result/csv/ablation_raw.csv` |
+| 泛化柱状图 | `fig_generalization_bar.pdf` | `result/csv/generalization_summary.csv` |
+| LP 耗时-规模图 | `fig_fluid_lp_time.pdf` | `result/csv/fluid_lp_time_raw.csv` |
+
+绘图说明：云雨图与热力图对 27 个实例做了**逐实例归一化/相对化**处理（云雨图为跨变体 min–max 归一化，热力图为相对 DA3C-Full 均值的变化百分比），以消除实例间目标值数量级差异；各变体结果完全相同的退化实例（如全零延期）会被自动剔除并提示。配色采用色盲友好的 Okabe–Ito 方案。
+
 ## 可复现性说明
 
 - 全部随机源（`random`、`numpy`、`torch`）由 `--seed` 统一控制；评测的第 *i* 次独立运行使用 `seed + i`。

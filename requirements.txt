@@ -11,7 +11,9 @@ scipy>=1.7
 # degrades gracefully to CSV-only logging if the visdom server is not running)
 visdom
 
+# Publication figures (experiments/plot_figures.py)
+matplotlib
+
 # Optional: legacy plotting utilities (utilities/Utility_Class.py)
-# matplotlib
 # pandas
 # openpyxl
