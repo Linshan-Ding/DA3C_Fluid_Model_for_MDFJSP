@@ -37,43 +37,81 @@ def generate(seed):
     print('泛化实例已生成到', DATA_GENERALIZATION_DIR)
 
 
+def read_raw():
+    """读取已有raw文件并转回数值类型(csv读回默认全为字符串)"""
+    import csv
+    if not RAW_PATH.exists():
+        return []
+    with open(RAW_PATH, newline='') as file:
+        rows = list(csv.DictReader(file))
+    for row in rows:
+        row['DDT'] = float(row['DDT'])
+        row['M'] = int(row['M'])
+        row['S'] = int(row['S'])
+        row['run'] = int(row['run'])
+        row['seed'] = int(row['seed'])
+        row['total_tardiness'] = float(row['total_tardiness'])
+    return rows
+
+
+def rebuild_summary(dict_rows):
+    summary = summarize(dict_rows, ['DDT', 'M', 'S', 'method'])
+    write_csv(SUMMARY_PATH, ['DDT', 'M', 'S', 'method', 'mean', 'std', 'n_runs'],
+              [[e['DDT'], e['M'], e['S'], e['method'], e['mean'], e['std'], e['n_runs']]
+               for e in summary])
+    print('已写出', SUMMARY_PATH)
+
+
 def run(runs, base_seed):
-    """DA3C-Full 与规则基线在全部泛化实例上评测"""
+    """
+    DA3C-Full 与规则基线在全部泛化实例上评测。
+    每完成一个实例即增量落盘raw文件(崩溃/中断后已评测结果不丢失，重跑会跳过已完成实例)。
+    """
     model_dir = variant_model_dir('full')
     _, env_kwargs = VARIANTS['full']
-    all_rows = []
+    all_rows = read_raw()  # 断点续跑：读入已完成的评测行
+    done_instances = {'DDT{}_M{}_S{}'.format(r['DDT'], r['M'], r['S']) for r in all_rows}
     for file_name in instance_names():
+        if file_name in done_instances:
+            print('实例 {}: 已有评测结果，跳过(如需重跑请先删除 {})'.format(file_name, RAW_PATH))
+            continue
+        instance_rows = []
         # DA3C-Full(直接部署已训练模型)
         rows = evaluate_policy_on_instance(model_dir, file_name, runs, env_kwargs,
                                            data_dir=DATA_GENERALIZATION_DIR, base_seed=base_seed)
         for row in rows:
-            all_rows.append(['DA3C', row['DDT'], row['M'], row['S'], row['run'],
-                             row['seed'], row['total_tardiness']])
+            instance_rows.append({'method': 'DA3C', 'DDT': row['DDT'], 'M': row['M'],
+                                  'S': row['S'], 'run': row['run'], 'seed': row['seed'],
+                                  'total_tardiness': row['total_tardiness']})
         # 规则基线
         for method in RULE_BASELINES:
             rows = evaluate_rule_on_instance(method, file_name, runs,
                                              data_dir=DATA_GENERALIZATION_DIR, base_seed=base_seed)
             for row in rows:
-                all_rows.append([method, row['DDT'], row['M'], row['S'], row['run'],
-                                 row['seed'], row['total_tardiness']])
-        print('实例 {}: 完成全部方法各 {} 次评测'.format(file_name, runs))
-    write_csv(RAW_PATH, RAW_HEADER, all_rows)
-    dict_rows = [dict(zip(RAW_HEADER, row)) for row in all_rows]
-    summary = summarize(dict_rows, ['DDT', 'M', 'S', 'method'])
-    write_csv(SUMMARY_PATH, ['DDT', 'M', 'S', 'method', 'mean', 'std', 'n_runs'],
-              [[e['DDT'], e['M'], e['S'], e['method'], e['mean'], e['std'], e['n_runs']]
-               for e in summary])
-    print('已写出', RAW_PATH, '和', SUMMARY_PATH)
+                instance_rows.append({'method': method, 'DDT': row['DDT'], 'M': row['M'],
+                                      'S': row['S'], 'run': row['run'], 'seed': row['seed'],
+                                      'total_tardiness': row['total_tardiness']})
+        all_rows.extend(instance_rows)
+        write_csv(RAW_PATH, RAW_HEADER, [[r[k] for k in RAW_HEADER] for r in all_rows])  # 增量落盘
+        print('实例 {}: 完成全部方法各 {} 次评测(raw已落盘)'.format(file_name, runs))
+    rebuild_summary(all_rows)
 
 
 def main():
     parser = argparse.ArgumentParser(description='规模泛化实验')
     parser.add_argument('--generate', action='store_true', help='生成泛化实例(仅需运行一次)')
+    parser.add_argument('--summarize', action='store_true',
+                        help='不评测，仅从已有 generalization_raw.csv 重建汇总文件')
     parser.add_argument('--runs', type=int, default=30, help='每方法每实例独立评测次数')
     parser.add_argument('--seed', type=int, default=42, help='实例生成/评测随机种子')
     args = parser.parse_args()
     if args.generate:
         generate(args.seed)
+    elif args.summarize:
+        rows = read_raw()
+        if not rows:
+            raise SystemExit('未找到 {}，请先运行评测'.format(RAW_PATH))
+        rebuild_summary(rows)
     else:
         if not DATA_GENERALIZATION_DIR.exists():
             raise SystemExit('未找到泛化实例目录，请先运行 --generate')

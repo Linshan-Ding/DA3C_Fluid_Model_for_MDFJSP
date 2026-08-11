@@ -89,9 +89,10 @@ python -m experiments.run_ablation --variant full --phase eval --runs 30
 ```bash
 python -m experiments.run_generalization --generate   # 仅需运行一次：生成 data_generalization/
 python -m experiments.run_generalization --runs 30
+python -m experiments.run_generalization --summarize  # 仅从已有raw重建summary(评测中断后恢复用)
 ```
 
-输出：`result/csv/generalization_raw.csv`、`result/csv/generalization_summary.csv`（列：`DDT,M,S,method,mean,std,n_runs`）。
+输出：`result/csv/generalization_raw.csv`、`result/csv/generalization_summary.csv`（列：`DDT,M,S,method,mean,std,n_runs`）。raw 文件**逐实例增量落盘**：评测中断后重跑会自动跳过已完成的实例，已有结果不丢失。
 
 ### 3. 流体 LP 在线求解耗时
 
@@ -126,7 +127,8 @@ python -m experiments.csv_to_latex --input result/csv/ablation_summary.csv --out
 补充实验全部运行完毕后，一条命令生成所有出版级矢量 PDF 配图（输出到 `result/figures/`，TrueType/Type42 字体内嵌，满足期刊投稿要求；缺少某个数据文件时自动跳过对应图）：
 
 ```bash
-python -m experiments.plot_figures --figure all
+python -m experiments.plot_figures --figure all          # 生成全部PDF
+python -m experiments.plot_figures --figure all --png    # 同时输出300dpi PNG预览
 ```
 
 也可单独生成某张图：
@@ -147,7 +149,13 @@ python -m experiments.plot_figures --figure lp-time          # 流体LP求解时
 | 泛化柱状图 | `fig_generalization_bar.pdf` | `result/csv/generalization_summary.csv` |
 | LP 耗时-规模图 | `fig_fluid_lp_time.pdf` | `result/csv/fluid_lp_time_raw.csv` |
 
-绘图说明：云雨图与热力图对 27 个实例做了**逐实例归一化/相对化**处理（云雨图为跨变体 min–max 归一化，热力图为相对 DA3C-Full 均值的变化百分比），以消除实例间目标值数量级差异；各变体结果完全相同的退化实例（如全零延期）会被自动剔除并提示。配色采用色盲友好的 Okabe–Ito 方案。
+绘图说明：
+
+- 云雨图与热力图对 27 个实例做了**逐实例归一化/相对化**处理（云雨图为跨变体 min–max 归一化并标注各变体均值与样本量，热力图为相对 DA3C-Full 均值的变化百分比），以消除实例间目标值数量级差异；各变体结果完全相同的退化实例（如全零延期）会被自动剔除并提示。
+- 热力图按 DDT 分为三个并排面板（行=变体，列=(M,S) 实例，单元格标注数值），整体宽大于高，便于双栏论文排版。
+- 收敛曲线为 25-epoch 滑动均值实线 + 滑动标准差**抖动阴影带**；同一变体重复训练向 `training.csv` 追加的旧数据会按 epoch 去重（保留最后一次训练）。
+- 泛化柱状图在 `generalization_summary.csv` 缺失时自动回退到 `generalization_raw.csv` 现场聚合。
+- 配色采用色盲友好的 Okabe–Ito 方案；LP 耗时图左面板散点按机器数着色，与右面板建立视觉关联。
 
 ## 可复现性说明
 
