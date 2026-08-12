@@ -82,6 +82,13 @@ python -m experiments.run_ablation --variant full --phase eval --runs 30
 
 输出：`result/csv/ablation_raw.csv`、`result/csv/ablation_summary.csv`（列：`DDT,M,S,variant,mean,std,n_runs`）、`result/csv/ablation_wilcoxon.csv`（Full 对各变体的 Wilcoxon 符号秩检验）。
 
+**论文消融表（表 8）的数据源**：论文以主实验（表 3–6，6.3 节评测）中已发表的 DA3C 结果为消融基准列，该基准数据固化在 `result/csv/da3c_reference.csv`；运行下述命令将其与重训变体（ns/nr/nf）合并为论文表格数据源（`ablation_summary.csv` 中统一框架重训的 full 行保留为历史记录，不进入论文表）：
+
+```bash
+python -m experiments.merge_ablation_reference   # 生成 result/csv/ablation_summary_paper.csv
+python -m experiments.csv_to_latex --input result/csv/ablation_summary_paper.csv --output result/latex/table_ablation.tex
+```
+
 ### 2. 规模泛化实验（分布外实例）
 
 已训练的 DA3C-Full 策略**不重训练**直接部署到更大实例（M∈{25,30,40}、S∈{8,10}），与 EDD+SPT、URG+SPT、Random 规则基线对比（基线运行于去流体环境，即纯规则版本）：
@@ -143,15 +150,15 @@ python -m experiments.plot_figures --figure lp-time          # 流体LP求解时
 
 | 图 | 输出文件 | 数据源 |
 |---|---|---|
-| 收敛曲线对比 | `fig_ablation_convergence.pdf` | `result/models/*/training.csv` |
-| 消融云雨图 | `fig_ablation_raincloud.pdf` | `result/csv/ablation_raw.csv` |
-| 消融热力图 | `fig_ablation_heatmap.pdf` | `result/csv/ablation_raw.csv` |
+| 收敛曲线对比（仓库补充材料，不进入论文） | `fig_ablation_convergence.pdf` | `result/models/*/training.csv` |
+| 消融云雨图 | `fig_ablation_raincloud.pdf` | `ablation_raw.csv` + `da3c_reference.csv` |
+| 消融热力图 | `fig_ablation_heatmap.pdf` | `ablation_raw.csv` + `da3c_reference.csv` |
 | 泛化柱状图 | `fig_generalization_bar.pdf` | `result/csv/generalization_summary.csv` |
 | LP 耗时-规模图 | `fig_fluid_lp_time.pdf` | `result/csv/fluid_lp_time_raw.csv` |
 
 绘图说明：
 
-- 云雨图与热力图对 27 个实例做了**逐实例归一化/相对化**处理（云雨图为跨变体 min–max 归一化并标注各变体均值与样本量，热力图为相对 DA3C-Full 均值的变化百分比），以消除实例间目标值数量级差异；各变体结果完全相同的退化实例（如全零延期）会被自动剔除并提示。
+- 云雨图与热力图均以论文主实验的 DA3C 结果（`da3c_reference.csv`）为基准做**逐实例相对化**：云雨图 x 轴为"每次运行总延期 / 对应实例 DA3C 均值"的比值（对数轴，x=1 虚线即 DA3C 水平，标注各变体中位数与样本量）；热力图单元格为变体均值相对 DA3C 均值的比值（对数色标）。DA3C 基准延期为 0 的实例比值无定义，云雨图剔除、热力图置灰，均有终端提示。
 - 热力图按 DDT 分为三个并排面板（行=变体，列=(M,S) 实例，单元格标注数值），整体宽大于高，便于双栏论文排版。
 - 收敛曲线为 25-epoch 滑动均值实线 + 滑动标准差**抖动阴影带**；同一变体重复训练向 `training.csv` 追加的旧数据会按 epoch 去重（保留最后一次训练）。
 - 泛化柱状图在 `generalization_summary.csv` 缺失时自动回退到 `generalization_raw.csv` 现场聚合。

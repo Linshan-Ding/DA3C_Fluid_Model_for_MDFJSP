@@ -8,8 +8,8 @@
 
 各图与数据源的对应关系：
     convergence     消融变体训练收敛曲线(滑动均值+/-滑动标准差阴影带) <- result/models/*/training.csv
-    raincloud       四个变体在27实例上的云雨图                       <- result/csv/ablation_raw.csv
-    heatmap         各变体相对Full的逐实例变化热力图(按DDT分面板)     <- result/csv/ablation_raw.csv
+    raincloud       三个消融变体相对DA3C均值的比值分布云雨图        <- ablation_raw.csv + da3c_reference.csv
+    heatmap         各变体相对DA3C的逐实例变化热力图(按DDT分面板)    <- ablation_raw.csv + da3c_reference.csv
     generalization  规模泛化实验分组柱状图                           <- result/csv/generalization_summary.csv
                     (summary缺失时自动回退到 generalization_raw.csv 现场聚合)
     lp-time         流体LP求解时间随问题规模变化                     <- result/csv/fluid_lp_time_raw.csv
@@ -127,6 +127,19 @@ def fig_convergence(plt):
 
 
 # ------------------------------------------------------------------ raincloud
+def load_da3c_reference():
+    """da3c_reference.csv(论文主实验的DA3C结果) -> {(DDT,M,S): mean}"""
+    path = CSV_DIR / 'da3c_reference.csv'
+    if not path.exists():
+        print('未找到 {} (论文主实验DA3C基准数据)'.format(path))
+        return None
+    return {(float(row['DDT']), int(row['M']), int(row['S'])): float(row['mean'])
+            for row in read_dict_rows(path)}
+
+
+ABLATION_VARIANTS = ['DA3C-NS', 'DA3C-NR', 'DA3C-NF']
+
+
 def load_ablation_groups():
     """ablation_raw.csv -> {变体显示名: {(DDT,M,S): [各次运行的总延期]}}"""
     path = CSV_DIR / 'ablation_raw.csv'
@@ -141,73 +154,74 @@ def load_ablation_groups():
     return groups
 
 
-def normalized_ablation_values(groups):
-    """
-    逐实例min-max归一化到[0,1](跨全部变体的所有运行)，
-    消除27个实例之间目标值数量级差异后才能放入同一分布图。
-    全零实例(max==min)对区分变体无信息量，予以剔除。
-    返回 {变体显示名: 归一化值列表}
-    """
-    instances = sorted(set().union(*[set(d) for d in groups.values()]))
-    normalized = {label: [] for label in groups}
-    skipped = 0
-    for key in instances:
-        pooled = [v for label in groups for v in groups[label].get(key, [])]
-        low, high = min(pooled), max(pooled)
-        if high - low <= 0:
-            skipped += 1
-            continue
-        for label in groups:
-            normalized[label].extend((v - low) / (high - low) for v in groups[label].get(key, []))
-    if skipped:
-        print('云雨图/热力图提示: {} 个实例各变体结果全部相同(如全零延期)，已剔除'.format(skipped))
-    return normalized
-
-
 def fig_raincloud(plt):
-    """四个变体在27实例上的云雨图：半小提琴(云) + 箱线 + 均值菱形 + 抖动散点(雨)"""
+    """
+    三个消融变体的云雨图：x轴为"每次运行总延期 / 对应实例DA3C均值"的比值(对数轴)，
+    DA3C基准为论文主实验(6.3节/表3-6)结果；x=1处虚线即DA3C水平。
+    半小提琴(对数空间KDE) + 箱线 + 中位数菱形 + 抖动散点。
+    """
     from scipy.stats import gaussian_kde
     groups = load_ablation_groups()
-    if not groups:
+    reference = load_da3c_reference()
+    if not groups or not reference:
         return
-    normalized = normalized_ablation_values(groups)
-    labels = [label for label in VARIANTS if label in normalized and normalized[label]]
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 3.0))
+    skipped = sum(1 for key in reference if reference[key] <= 0)
+    if skipped:
+        print('云雨图提示: {} 个实例的DA3C基准延期为0(比值无定义)，已剔除'.format(skipped))
+    ratio_groups = {}
+    for label in ABLATION_VARIANTS:
+        if label not in groups:
+            continue
+        ratios = [v / reference[key] for key, values in groups[label].items()
+                  if reference.get(key, 0) > 0 for v in values if v > 0]
+        ratio_groups[label] = np.asarray(ratios)
+    labels = [label for label in ABLATION_VARIANTS if len(ratio_groups.get(label, [])) > 0]
+    if not labels:
+        return
+    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 2.6))
     rng = np.random.default_rng(0)
+    log_min = min(np.log10(ratio_groups[label]).min() for label in labels) - 0.1
+    log_max = max(np.log10(ratio_groups[label]).max() for label in labels) + 0.1
     for i, label in enumerate(labels):
-        values = np.asarray(normalized[label])
+        values = ratio_groups[label]
+        logs = np.log10(values)
         color = VARIANTS[label][1]
-        # 云：半小提琴(KDE密度朝上)；方差退化时跳过云只画箱线和散点
-        if values.std() > 1e-9:
-            kde = gaussian_kde(values)
-            xs = np.linspace(0, 1, 200)
-            density = kde(xs)
+        # 云：对数空间KDE的半小提琴(在对数轴上形状正确)
+        if logs.std() > 1e-9:
+            kde = gaussian_kde(logs)
+            grid = np.linspace(log_min, log_max, 300)
+            density = kde(grid)
             density = density / density.max() * 0.32
-            ax.fill_between(xs, i + 0.08, i + 0.08 + density, facecolor=color, alpha=0.55,
-                            lw=0.6, edgecolor=color, zorder=3)
+            ax.fill_between(10 ** grid, i - 0.08, i - 0.08 - density, facecolor=color,
+                            alpha=0.55, lw=0.6, edgecolor=color, zorder=3)
         # 箱线：紧贴云的下方
         ax.boxplot(values, positions=[i], vert=False, widths=0.10, showfliers=False,
                    patch_artist=True, zorder=4,
                    boxprops=dict(facecolor='white', edgecolor=color, lw=0.8),
                    whiskerprops=dict(color=color, lw=0.8), capprops=dict(color=color, lw=0.8),
                    medianprops=dict(color=color, lw=1.2))
-        # 均值菱形标记 + 右缘均值标注(提高信息密度)
-        mean = values.mean()
-        ax.scatter([mean], [i], marker='D', s=13, facecolor='white', edgecolor='black',
+        # 中位数菱形 + 右缘标注(对数轴上中位数比均值稳健)
+        median = float(np.median(values))
+        ax.scatter([median], [i], marker='D', s=13, facecolor='white', edgecolor='black',
                    linewidths=0.7, zorder=6)
-        ax.text(1.015, i, 'mean={:.3f}\nn={}'.format(mean, len(values)),
-                va='center', ha='left', fontsize=6.5, color='0.25')
+        ax.text(1.01, i, 'median={:.2f}$\\times$\nn={}'.format(median, len(values)),
+                va='center', ha='left', fontsize=6.5, color='0.25',
+                transform=ax.get_yaxis_transform())
         # 雨：抖动散点
         jitter = rng.uniform(-0.10, 0.10, size=len(values))
-        ax.scatter(values, i - 0.24 + jitter, s=2.2, color=color, alpha=0.28,
+        ax.scatter(values, i + 0.24 + jitter, s=2.2, color=color, alpha=0.28,
                    linewidths=0, zorder=2, rasterized=True)
+    # DA3C基准参考线(比值=1)
+    ax.axvline(1.0, color=VARIANTS['DA3C-Full'][1], lw=1.0, linestyle='--', zorder=1)
+    ax.text(1.0, 1.02, 'DA3C', color=VARIANTS['DA3C-Full'][1], fontsize=7.5,
+            ha='center', va='bottom', transform=ax.get_xaxis_transform())
+    ax.set_xscale('log')
+    ax.set_xlim(10 ** log_min, 10 ** log_max)
     ax.set_yticks(range(len(labels)))
     ax.set_yticklabels(labels)
-    ax.set_ylim(-0.6, len(labels) - 1 + 0.55)
-    ax.set_xlim(-0.02, 1.14)
-    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
-    ax.set_xlabel('Per-instance min--max normalized total tardiness')
-    ax.invert_yaxis()  # Full 显示在最上方
+    ax.set_ylim(-0.62, len(labels) - 1 + 0.48)
+    ax.set_xlabel('Total tardiness ratio to the DA3C mean (log scale)')
+    ax.invert_yaxis()  # NS 显示在最上方
     save(fig, 'fig_ablation_raincloud.pdf')
     plt.close(fig)
 
@@ -215,38 +229,43 @@ def fig_raincloud(plt):
 # -------------------------------------------------------------------- heatmap
 def fig_heatmap(plt):
     """
-    各消融变体相对DA3C-Full的逐实例均值变化率(%)热力图。
+    各消融变体相对DA3C(论文主实验结果)的逐实例均值变化率(%)热力图。
     按DDT分为三个并排面板(整体宽>高，便于论文双栏布局)：
     每个面板行=变体(NS/NR/NF)，列=该DDT下的9个(M,S)实例，单元格标注数值。
     """
     groups = load_ablation_groups()
-    if not groups or 'DA3C-Full' not in groups:
+    reference = load_da3c_reference()
+    if not groups or not reference:
         return
-    variant_labels = [label for label in VARIANTS if label != 'DA3C-Full' and label in groups]
-    instances = sorted(groups['DA3C-Full'])
+    variant_labels = [label for label in ABLATION_VARIANTS if label in groups]
+    instances = sorted(reference)
     ddts = sorted({key[0] for key in instances})
-    panels = {}  # ddt -> (列key列表, 矩阵[len(variants) x 列数])
+    panels = {}  # ddt -> (列key列表, 矩阵[len(variants) x 列数])；单元格为 变体均值/DA3C均值 的比值
     for ddt in ddts:
         columns = [key for key in instances if key[0] == ddt]
         matrix = np.full((len(variant_labels), len(columns)), np.nan)
         for col_index, key in enumerate(columns):
-            base = np.mean(groups['DA3C-Full'][key])
+            base = reference[key]
             for row_index, label in enumerate(variant_labels):
                 values = groups[label].get(key)
                 if values is not None and base > 0:
-                    matrix[row_index, col_index] = (np.mean(values) - base) / base * 100
-                # base==0 的实例保持NaN(灰色)：相对变化率无定义
+                    matrix[row_index, col_index] = np.mean(values) / base
+                # base==0 的实例保持NaN(灰色)：比值无定义
         panels[ddt] = (columns, matrix)
     stacked = np.concatenate([panels[d][1] for d in ddts], axis=1)
-    limit = np.nanpercentile(np.abs(stacked), 95) if np.isfinite(stacked).any() else 1
-    cmap = plt.get_cmap('RdBu_r').copy()
+    # 比值跨越两个数量级以上，用对数色标(与云雨图的对数轴呼应)
+    from matplotlib.colors import LogNorm
+    vmin = max(np.nanmin(stacked), 1.0)
+    vmax = np.nanmax(stacked)
+    norm = LogNorm(vmin=vmin, vmax=vmax)
+    cmap = plt.get_cmap('Reds').copy()
     cmap.set_bad('0.85')
     fig, axes = plt.subplots(1, len(ddts), figsize=(DOUBLE_COL, 1.95), sharey=True)
     axes = np.atleast_1d(axes)
     image = None
     for ax, ddt in zip(axes, ddts):
         columns, matrix = panels[ddt]
-        image = ax.imshow(matrix, aspect='auto', cmap=cmap, vmin=-limit, vmax=limit)
+        image = ax.imshow(matrix, aspect='auto', cmap=cmap, norm=norm)
         ax.set_xticks(range(len(columns)))
         ax.set_xticklabels(['{},{}'.format(key[1], key[2]) for key in columns],
                            fontsize=6, rotation=0)
@@ -260,11 +279,12 @@ def fig_heatmap(plt):
                 value = matrix[row_index, col_index]
                 if not np.isfinite(value):
                     continue
-                text_color = 'white' if abs(value) > 0.62 * limit else 'black'
-                ax.text(col_index, row_index, '{:+.0f}'.format(value), ha='center', va='center',
-                        fontsize=5.4, color=text_color)
+                text_color = 'white' if norm(value) > 0.62 else 'black'
+                label_text = '{:.1f}'.format(value) if value < 10 else '{:.0f}'.format(value)
+                ax.text(col_index, row_index, label_text, ha='center', va='center',
+                        fontsize=5.6, color=text_color)
     bar = fig.colorbar(image, ax=axes, orientation='vertical', fraction=0.035, pad=0.015)
-    bar.set_label('Change vs Full (%)', fontsize=7)
+    bar.set_label('Ratio to DA3C (log scale)', fontsize=7)
     bar.ax.tick_params(labelsize=6.5)
     bar.outline.set_linewidth(0.6)
     save(fig, 'fig_ablation_heatmap.pdf')

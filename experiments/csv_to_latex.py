@@ -11,10 +11,11 @@ from pathlib import Path
 
 from utilities.common import read_csv
 
-# 各方法列的显示顺序与表头名
-PIVOT_ORDER = {'variant': ['full', 'ns', 'nr', 'nf'],
+# 各方法列的显示顺序与表头名(da3c=论文主实验的DA3C结果，full=统一框架重训的完整方法)
+PIVOT_ORDER = {'variant': ['da3c', 'full', 'ns', 'nr', 'nf'],
                'method': ['DA3C', 'EDD+SPT', 'URG+SPT', 'Random']}
-PIVOT_LABEL = {'full': 'DA3C-Full', 'ns': 'DA3C-NS', 'nr': 'DA3C-NR', 'nf': 'DA3C-NF'}
+PIVOT_LABEL = {'da3c': 'DA3C', 'full': 'DA3C-Full',
+               'ns': 'DA3C-NS', 'nr': 'DA3C-NR', 'nf': 'DA3C-NF'}
 
 
 def escape(text):
