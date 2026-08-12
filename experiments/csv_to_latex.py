@@ -36,23 +36,30 @@ def pivot_table(header, rows, pivot_col):
         key = (row[col['DDT']], row[col['M']], row[col['S']])
         cells.setdefault(key, {})[row[col[pivot_col]]] = (float(row[col['mean']]),
                                                           float(row[col['std']]))
+    # 与论文表5相同的展示风格：每个算法占 mean/std 两列，二级表头，
+    # 行内最优均值与最优标准差分别加粗
+    n_cols = 3 + 2 * len(order)
     lines = []
-    lines.append('\\begin{tabular}{ccc' + 'c' * len(order) + '}')
+    lines.append('\\begin{tabular}{' + 'c' * n_cols + '}')
     lines.append('\\toprule')
-    head = ['$DDT$', '$M$', '$S$'] + [escape(PIVOT_LABEL.get(m, m)) for m in order]
-    lines.append(' & '.join(head) + ' \\\\')
+    lines.append('     & & & ' + ' & '.join('\\multicolumn{{2}}{{c}}{{{}}}'.format(
+        escape(PIVOT_LABEL.get(m, m))) for m in order) + ' \\\\ \\cline{{4-{}}}'.format(n_cols))
+    lines.append('$DDT$ & $M$ & $S$ & ' + ' & '.join('mean & std' for _ in order) + ' \\\\')
     lines.append('\\midrule')
     for key in sorted(cells, key=lambda k: (float(k[0]), int(k[1]), int(k[2]))):
         row_cells = cells[key]
-        best = min(v[0] for v in row_cells.values())
+        best_mean = min(v[0] for v in row_cells.values())
+        best_std = min(v[1] for v in row_cells.values())
         parts = [str(key[0]), str(key[1]), str(key[2])]
         for m in order:
             if m not in row_cells:
-                parts.append('--')
+                parts.extend(['--', '--'])
                 continue
             mean, std = row_cells[m]
-            text = '{:.1f} ({:.1f})'.format(mean, std)
-            parts.append('\\textbf{{{}}}'.format(text) if mean == best else text)
+            mean_text = '{:.2f}'.format(mean)
+            std_text = '{:.2f}'.format(std)
+            parts.append('\\textbf{{{}}}'.format(mean_text) if mean == best_mean else mean_text)
+            parts.append('\\textbf{{{}}}'.format(std_text) if std == best_std else std_text)
         lines.append(' & '.join(parts) + ' \\\\')
     lines.append('\\bottomrule')
     lines.append('\\end{tabular}')
