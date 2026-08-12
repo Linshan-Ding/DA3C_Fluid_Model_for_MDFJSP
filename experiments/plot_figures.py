@@ -41,7 +41,7 @@ SAVE_PNG = False   # --png 时同时输出300dpi PNG预览
 
 
 def setup_matplotlib():
-    """出版级绘图全局设置：Type42字体内嵌、衬线字体、细线框、去顶右边框"""
+    """出版级绘图全局设置：Type42字体内嵌、衬线字体、细线框、闭合矩形坐标框"""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -53,7 +53,7 @@ def setup_matplotlib():
         'font.size': 8, 'axes.labelsize': 8.5, 'axes.titlesize': 8.5,
         'legend.fontsize': 7.5, 'xtick.labelsize': 7.5, 'ytick.labelsize': 7.5,
         'axes.linewidth': 0.6, 'xtick.major.width': 0.6, 'ytick.major.width': 0.6,
-        'axes.spines.top': False, 'axes.spines.right': False,
+        'axes.spines.top': True, 'axes.spines.right': True,  # 闭合矩形坐标框
         'lines.linewidth': 1.1, 'legend.frameon': False,
         'figure.dpi': 150, 'savefig.bbox': 'tight', 'savefig.pad_inches': 0.02,
     })
@@ -254,8 +254,6 @@ def fig_heatmap(plt):
         ax.set_yticklabels([label.replace('DA3C-', '') for label in variant_labels])
         ax.set_title('$DDT={}$'.format(ddt), pad=3)
         ax.set_xlabel('($M$, $S$)', fontsize=7)
-        for spine in ax.spines.values():  # 热力图保留完整边框
-            spine.set_visible(True)
         # 单元格数值标注(提高信息密度)；按背景深浅自动切换文字颜色
         for row_index in range(matrix.shape[0]):
             for col_index in range(matrix.shape[1]):
