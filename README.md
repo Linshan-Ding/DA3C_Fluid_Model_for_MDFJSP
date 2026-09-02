@@ -136,6 +136,7 @@ python -m experiments.csv_to_latex --input result/csv/ablation_summary.csv --out
 ```bash
 python -m experiments.plot_figures --figure all          # 生成全部PDF
 python -m experiments.plot_figures --figure all --png    # 同时输出300dpi PNG预览
+python -m experiments.plot_figures --figure all --column # 单栏版式(3.5in宽)，输出文件名加 _col 后缀，供 IEEE 双栏模板使用
 ```
 
 也可单独生成某张图：

@@ -38,6 +38,7 @@ RAW_VARIANT_LABEL = {'full': 'DA3C-Full', 'ns': 'DA3C-NS', 'nr': 'DA3C-NR', 'nf'
 SINGLE_COL = 3.5   # 单栏图宽(英寸)
 DOUBLE_COL = 7.2   # 双栏图宽(英寸)
 SAVE_PNG = False   # --png 时同时输出300dpi PNG预览
+LAYOUT = 'double'  # 'double': 双栏跨栏宽图(默认); 'column': 单栏窄图(IEEE 双栏模板用，文件名加 _col 后缀)
 
 
 def setup_matplotlib():
@@ -62,6 +63,8 @@ def setup_matplotlib():
 
 def save(fig, name):
     FIG_DIR.mkdir(parents=True, exist_ok=True)
+    if LAYOUT == 'column':
+        name = name.replace('.pdf', '_col.pdf')
     out = FIG_DIR / name
     fig.savefig(out)
     print('已生成', out)
@@ -178,7 +181,8 @@ def fig_raincloud(plt):
     labels = [label for label in ABLATION_VARIANTS if len(ratio_groups.get(label, [])) > 0]
     if not labels:
         return
-    fig, ax = plt.subplots(figsize=(DOUBLE_COL, 2.6))
+    column = LAYOUT == 'column'
+    fig, ax = plt.subplots(figsize=(SINGLE_COL, 2.15) if column else (DOUBLE_COL, 2.6))
     rng = np.random.default_rng(0)
     log_min = min(np.log10(ratio_groups[label]).min() for label in labels) - 0.1
     log_max = max(np.log10(ratio_groups[label]).max() for label in labels) + 0.1
@@ -204,8 +208,8 @@ def fig_raincloud(plt):
         median = float(np.median(values))
         ax.scatter([median], [i], marker='D', s=13, facecolor='white', edgecolor='black',
                    linewidths=0.7, zorder=6)
-        ax.text(1.01, i, 'median={:.2f}$\\times$\nn={}'.format(median, len(values)),
-                va='center', ha='left', fontsize=6.5, color='0.25',
+        ax.text(1.01, i, ('{:.2f}$\\times$' if column else 'median={:.2f}$\\times$\nn={}').format(median, len(values)),
+                va='center', ha='left', fontsize=6 if column else 6.5, color='0.25',
                 transform=ax.get_yaxis_transform())
         # 雨：抖动散点
         jitter = rng.uniform(-0.10, 0.10, size=len(values))
@@ -220,7 +224,7 @@ def fig_raincloud(plt):
     ax.set_yticks(range(len(labels)))
     ax.set_yticklabels(labels)
     ax.set_ylim(-0.62, len(labels) - 1 + 0.48)
-    ax.set_xlabel('Total tardiness ratio to the DA3C mean (log scale)')
+    ax.set_xlabel('Ratio to DA3C mean (log scale)' if column else 'Total tardiness ratio to the DA3C mean (log scale)')
     ax.invert_yaxis()  # NS 显示在最上方
     save(fig, 'fig_ablation_raincloud.pdf')
     plt.close(fig)
@@ -322,7 +326,11 @@ def fig_generalization(plt):
     methods = [m for m in METHOD_COLORS if any(row['method'] == m for row in rows)]
     data = {(float(row['DDT']), int(row['M']), int(row['S']), row['method']):
             (float(row['mean']), float(row['std'])) for row in rows}
-    fig, axes = plt.subplots(1, len(ddts), figsize=(DOUBLE_COL, 2.5), sharey=True)
+    column = LAYOUT == 'column'
+    if column:
+        fig, axes = plt.subplots(len(ddts), 1, figsize=(SINGLE_COL, 3.3), sharex=True)
+    else:
+        fig, axes = plt.subplots(1, len(ddts), figsize=(DOUBLE_COL, 2.5), sharey=True)
     axes = np.atleast_1d(axes)
     width = 0.8 / len(methods)
     for ax, ddt in zip(axes, ddts):
@@ -342,12 +350,23 @@ def fig_generalization(plt):
         ax.set_yscale('log')
         ax.set_xticks(range(len(combos)))
         ax.set_xticklabels(['{},{}'.format(m, s) for (m, s) in combos], rotation=0)
-        ax.set_xlabel('($M$, $S$)')
-        ax.set_title('$DDT={}$'.format(ddt))
         ax.tick_params(axis='x', length=2)
-    axes[0].set_ylabel('Total tardiness (log scale)')
-    fig.legend(loc='upper center', bbox_to_anchor=(0.5, 1.06), ncol=len(methods),
-               columnspacing=1.4, handlelength=1.2)
+        if column:
+            ax.text(0.02, 0.86, '$DDT={}$'.format(ddt), transform=ax.transAxes, fontsize=7.5,
+                    bbox=dict(facecolor='white', alpha=0.85, edgecolor='none', pad=1.2), zorder=5)
+        else:
+            ax.set_xlabel('($M$, $S$)')
+            ax.set_title('$DDT={}$'.format(ddt))
+    if column:
+        axes[-1].set_xlabel('($M$, $S$)')
+        axes[len(axes) // 2].set_ylabel('Total tardiness (log scale)')
+        fig.legend(loc='upper center', bbox_to_anchor=(0.5, 1.02), ncol=len(methods),
+                   columnspacing=0.9, handlelength=1.0, fontsize=6.5)
+        fig.subplots_adjust(hspace=0.12)
+    else:
+        axes[0].set_ylabel('Total tardiness (log scale)')
+        fig.legend(loc='upper center', bbox_to_anchor=(0.5, 1.06), ncol=len(methods),
+                   columnspacing=1.4, handlelength=1.2)
     save(fig, 'fig_generalization_bar.pdf')
     plt.close(fig)
 
@@ -364,7 +383,8 @@ def fig_lp_time(plt):
     times = np.array([float(row['solve_time_ms']) for row in rows])
     machines = np.array([int(row['M']) for row in rows])
     machine_values = sorted(set(machines))
-    fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(DOUBLE_COL, 2.5))
+    column = LAYOUT == 'column'
+    fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(SINGLE_COL, 1.75) if column else (DOUBLE_COL, 2.5))
     # 左图：散点按机器数M着色(与右图建立视觉关联) + 分箱中位数趋势线
     cmap = plt.get_cmap('viridis')
     shade = {m: cmap(i / max(1, len(machine_values) - 1))
@@ -385,8 +405,8 @@ def fig_lp_time(plt):
                      zorder=5, label='Binned median')
     ax_left.set_xlabel('Number of LP variables')
     ax_left.set_ylabel('Solve time (ms)')
-    ax_left.legend(fontsize=6, ncol=2, columnspacing=0.8, handletextpad=0.4,
-                   markerscale=1.6, labelspacing=0.3)
+    ax_left.legend(fontsize=5 if column else 6, ncol=2, columnspacing=0.6 if column else 0.8,
+                   handletextpad=0.3, markerscale=1.6, labelspacing=0.25)
     # 右图：按机器数M聚合的均值与p95
     means = [times[machines == m].mean() for m in machine_values]
     p95s = [np.percentile(times[machines == m], 95) for m in machine_values]
@@ -397,10 +417,13 @@ def fig_lp_time(plt):
     ax_right.set_xlabel('Number of machines $M$')
     ax_right.set_ylabel('Solve time (ms)')
     ax_right.set_xticks(machine_values)
-    ax_right.legend()
+    ax_right.legend(fontsize=6 if column else None)
     for label, ax in zip('ab', (ax_left, ax_right)):
-        ax.text(-0.16, 1.02, '({})'.format(label), transform=ax.transAxes, fontweight='bold')
-    fig.tight_layout(w_pad=2.0)
+        ax.text(-0.22 if column else -0.16, 1.02, '({})'.format(label), transform=ax.transAxes, fontweight='bold')
+        if column:
+            ax.tick_params(labelsize=6.5)
+            ax.xaxis.label.set_size(7); ax.yaxis.label.set_size(7)
+    fig.tight_layout(w_pad=1.2 if column else 2.0)
     save(fig, 'fig_fluid_lp_time.pdf')
     plt.close(fig)
 
@@ -415,13 +438,16 @@ FIGURES = {
 
 
 def main():
-    global SAVE_PNG
+    global SAVE_PNG, LAYOUT
     parser = argparse.ArgumentParser(description='补充实验出版级PDF配图生成')
     parser.add_argument('--figure', choices=['all'] + sorted(FIGURES), default='all',
                         help='要生成的图(默认all)')
     parser.add_argument('--png', action='store_true', help='同时输出300dpi PNG预览')
+    parser.add_argument('--column', action='store_true',
+                        help='单栏版式(3.5in宽，IEEE双栏模板用)，输出文件名加 _col 后缀')
     args = parser.parse_args()
     SAVE_PNG = args.png
+    LAYOUT = 'column' if args.column else 'double'
     plt = setup_matplotlib()
     targets = sorted(FIGURES) if args.figure == 'all' else [args.figure]
     for name in targets:
